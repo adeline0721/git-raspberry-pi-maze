@@ -1,6 +1,13 @@
 # ============================================================
-# RASPBERRY PI SENSE HAT MAZE GAME
-# Tilt-Controlled 8x8 LED Maze
+# 🍓 RASPBERRY PI SENSE HAT MAZE ADVENTURE
+# ============================================================
+#
+# Tilt-controlled maze game using:
+#   • Raspberry Pi
+#   • Sense HAT LED matrix
+#   • Sense HAT accelerometer
+#   • Sense HAT joystick
+#
 # ============================================================
 
 from sense_hat import SenseHat
@@ -8,11 +15,12 @@ import time
 
 
 # ============================================================
-# SETUP
+# INITIALISE SENSE HAT
 # ============================================================
 
 sense = SenseHat()
-sense.clear()
+sense.low_light = False
+
 
 # ============================================================
 # GAME SETTINGS
@@ -21,52 +29,152 @@ sense.clear()
 MAX_LIVES = 5
 
 TILT_THRESHOLD = 0.35
+NEUTRAL_THRESHOLD = 0.18
+CALIBRATION_SAMPLES = 30
+MOVE_COOLDOWN = 0.20
 
-MOVE_DELAY = 0.25
 
 # ============================================================
 # COLOURS
 # ============================================================
 
 BLACK = (0, 0, 0)
-
-BLUE = (0, 0, 255)
-
-GREEN = (0, 255, 0)
-
-RED = (255, 0, 0)
-
-YELLOW = (255, 255, 0)
-
 WHITE = (255, 255, 255)
-
+RED = (255, 0, 0)
+GREEN = (0, 255, 0)
+BLUE = (0, 0, 255)
+YELLOW = (255, 255, 0)
 CYAN = (0, 255, 255)
+MAGENTA = (255, 0, 255)
+ORANGE = (255, 100, 0)
 
 
 # ============================================================
-# MAZE
+# MAZE SYMBOLS
+# ============================================================
+
+WALL = "#"
+PATH = "."
+PLAYER = "P"
+FINISH = "F"
+
+
+# ============================================================
+# 🗺️ MAZE
 # ============================================================
 #
+# EXACT 8 x 8 MAP
+#
 # # = wall
-# . = empty path
+# . = empty/path
 # P = player
 # F = finish
 #
-# IMPORTANT:
-# The maze MUST be exactly 8 x 8.
+# Board layout:
+#
+# ########
+# #P..#..#
+# ###.#.##
+# #......#
+# #.####.#
+# #....#.#
+# ####.#.#
+# ####..F#
 #
 # ============================================================
 
-maze = [
-    "########",
-    "#P.....#",
-    "######.#",
-    "#......#",
-    "#.######",
-    "#......#",
-    "#.######",
-    "#.....F#"
+LEVELS = [
+
+    {
+        "name": "MAZE",
+        "maze": [
+            "########",
+            "#P..#..#",
+            "###.#.##",
+            "#......#",
+            "#.####.#",
+            "#....#.#",
+            "####.#.#",
+            "####..F#"
+        ],
+        "time_limit": 180
+    }
+
 ]
+
+
+# ============================================================
+# GAME VARIABLES
+# ============================================================
+
+current_level = 0
+
+maze = []
+
+player_row = 0
+player_col = 0
+
+finish_row = 0
+finish_col = 0
+
+lives = MAX_LIVES
+score = 0
+moves = 0
+
+start_time = 0
+
+paused = False
+
+
+# ============================================================
+# SENSOR CALIBRATION
+# ============================================================
+
+x_offset = 0
+y_offset = 0
+
+
+def calibrate_sensor():
+
+    global x_offset
+    global y_offset
+
+    sense.clear()
+
+    # Calibration indicator
+    sense.set_pixel(3, 3, CYAN)
+    sense.set_pixel(4, 3, CYAN)
+    sense.set_pixel(3, 4, CYAN)
+    sense.set_pixel(4, 4, CYAN)
+
+    time.sleep(1)
+
+    x_total = 0
+    y_total = 0
+
+    for _ in range(CALIBRATION_SAMPLES):
+
+        acceleration = sense.get_accelerometer_raw()
+
+        x_total += acceleration["x"]
+        y_total += acceleration["y"]
+
+        time.sleep(0.03)
+
+    x_offset = x_total / CALIBRATION_SAMPLES
+    y_offset = y_total / CALIBRATION_SAMPLES
+
+    sense.clear()
+
+    # Calibration complete
+    for _ in range(2):
+
+        sense.clear(GREEN)
+        time.sleep(0.15)
+
+        sense.clear(BLACK)
+        time.sleep(0.15)
+
 
 # ============================================================
 # FIND PLAYER AND FINISH
@@ -76,7 +184,6 @@ def find_positions():
 
     global player_row
     global player_col
-
     global finish_row
     global finish_col
 
@@ -84,43 +191,38 @@ def find_positions():
 
         for col in range(8):
 
-            if maze[row][col] == "P":
+            if maze[row][col] == PLAYER:
 
                 player_row = row
                 player_col = col
 
-            elif maze[row][col] == "F":
+            elif maze[row][col] == FINISH:
 
                 finish_row = row
                 finish_col = col
 
 
 # ============================================================
-# GAME VARIABLES
+# LOAD MAZE
 # ============================================================
 
-player_row = 0
-player_col = 0
+def load_level(level_number):
 
-finish_row = 0
-finish_col = 0
+    global current_level
+    global maze
 
-lives = MAX_LIVES
+    current_level = level_number
 
-score = 0
+    maze = LEVELS[level_number]["maze"].copy()
 
-moves = 0
-
-game_over = False
-
-game_won = False
+    find_positions()
 
 
 # ============================================================
-# DISPLAY MAZE ON SENSE HAT
+# DRAW MAZE ON 8 x 8 LED BOARD
 # ============================================================
 
-def display_maze():
+def draw_maze():
 
     pixels = []
 
@@ -128,34 +230,22 @@ def display_maze():
 
         for col in range(8):
 
-            # ----------------------------------------------
-            # PLAYER
-            # ----------------------------------------------
-
+            # PLAYER = GREEN
             if row == player_row and col == player_col:
 
                 pixels.append(GREEN)
 
-            # ----------------------------------------------
-            # FINISH
-            # ----------------------------------------------
-
+            # FINISH = YELLOW
             elif row == finish_row and col == finish_col:
 
                 pixels.append(YELLOW)
 
-            # ----------------------------------------------
-            # WALL
-            # ----------------------------------------------
-
-            elif maze[row][col] == "#":
+            # WALL = BLUE
+            elif maze[row][col] == WALL:
 
                 pixels.append(BLUE)
 
-            # ----------------------------------------------
-            # EMPTY PATH
-            # ----------------------------------------------
-
+            # EMPTY PATH = BLACK
             else:
 
                 pixels.append(BLACK)
@@ -164,53 +254,47 @@ def display_maze():
 
 
 # ============================================================
-# SHOW START SCREEN
+# SHOW MAZE AT START
 # ============================================================
 
-def start_screen():
+def show_level_intro():
 
-    # Green flash
-
-    for i in range(2):
+    for _ in range(2):
 
         sense.clear(GREEN)
-
         time.sleep(0.25)
 
         sense.clear(BLACK)
-
         time.sleep(0.25)
 
-    display_maze()
+    draw_maze()
+
+    time.sleep(1)
 
 
 # ============================================================
-# SHOW LIVES
+# ❤️ SHOW LIVES
 # ============================================================
 
 def show_lives():
 
-    # Show lives briefly using the top row.
-
     sense.clear()
 
-    for i in range(lives):
+    for x in range(lives):
 
-        if i < 8:
+        sense.set_pixel(
+            x,
+            0,
+            RED
+        )
 
-            sense.set_pixel(
-                i,
-                0,
-                RED
-            )
+    time.sleep(0.7)
 
-    time.sleep(0.8)
-
-    display_maze()
+    draw_maze()
 
 
 # ============================================================
-# WALL COLLISION
+# 💥 HIT WALL
 # ============================================================
 
 def hit_wall():
@@ -220,23 +304,86 @@ def hit_wall():
 
     lives -= 1
 
-    # Lose points
-    score = max(0, score - 10)
+    score = max(0, score - 50)
 
-    # Flash red
-
-    sense.clear(RED)
-
-    time.sleep(0.2)
-
-    display_maze()
-
-    time.sleep(0.2)
-
-    # Terminal is ONLY for status/debugging
     print("Wall hit!")
     print("Lives:", lives)
     print("Score:", score)
+
+    # Red flash
+    for _ in range(2):
+
+        sense.clear(RED)
+        time.sleep(0.15)
+
+        draw_maze()
+        time.sleep(0.15)
+
+    if lives > 0:
+
+        show_lives()
+
+
+# ============================================================
+# GET ACCELEROMETER DATA
+# ============================================================
+
+def get_acceleration():
+
+    acceleration = sense.get_accelerometer_raw()
+
+    x = acceleration["x"] - x_offset
+    y = acceleration["y"] - y_offset
+
+    return x, y
+
+
+# ============================================================
+# GET TILT DIRECTION
+# ============================================================
+
+def get_direction():
+
+    x, y = get_acceleration()
+
+    # Use the stronger tilt direction
+    if abs(x) > abs(y):
+
+        if x > TILT_THRESHOLD:
+            return "RIGHT"
+
+        elif x < -TILT_THRESHOLD:
+            return "LEFT"
+
+    else:
+
+        if y > TILT_THRESHOLD:
+            return "DOWN"
+
+        elif y < -TILT_THRESHOLD:
+            return "UP"
+
+    return None
+
+
+# ============================================================
+# WAIT UNTIL BOARD IS NEUTRAL
+# ============================================================
+
+def wait_for_neutral():
+
+    while True:
+
+        x, y = get_acceleration()
+
+        if (
+            abs(x) < NEUTRAL_THRESHOLD
+            and abs(y) < NEUTRAL_THRESHOLD
+        ):
+
+            return
+
+        time.sleep(0.05)
 
 
 # ============================================================
@@ -247,19 +394,13 @@ def move_player(direction):
 
     global player_row
     global player_col
-
     global moves
     global score
-
-    global game_won
 
     new_row = player_row
     new_col = player_col
 
-
-    # ========================================================
-    # CALCULATE NEW POSITION
-    # ========================================================
+    # Calculate new position
 
     if direction == "UP":
 
@@ -279,30 +420,28 @@ def move_player(direction):
 
 
     # ========================================================
-    # CHECK BOUNDARY
+    # CHECK BOARD BOUNDARY
     # ========================================================
 
-    if (
-        new_row < 0
-        or new_row >= 8
-        or new_col < 0
-        or new_col >= 8
-    ):
+    if new_row < 0 or new_row >= 8:
 
         hit_wall()
+        return False
 
-        return
-
-    
-    # ========================================================
-    # CHECK WALL
-    # ========================================================
-
-    if maze[new_row][new_col] == "#":
+    if new_col < 0 or new_col >= 8:
 
         hit_wall()
+        return False
 
-        return
+
+    # ========================================================
+    # CHECK BLUE WALL
+    # ========================================================
+
+    if maze[new_row][new_col] == WALL:
+
+        hit_wall()
+        return False
 
 
     # ========================================================
@@ -310,12 +449,16 @@ def move_player(direction):
     # ========================================================
 
     player_row = new_row
-
     player_col = new_col
 
     moves += 1
-
     score += 10
+
+    print(
+        "Player:",
+        "row", player_row,
+        "column", player_col
+    )
 
 
     # ========================================================
@@ -327,114 +470,110 @@ def move_player(direction):
         and player_col == finish_col
     ):
 
-        game_won = True
-
-        return
+        return True
 
 
-    # Update LEDs
-    display_maze()
+    # Update LED board
+    draw_maze()
 
-
-# ============================================================
-# READ TILT SENSOR
-# ============================================================
-
-def get_direction():
-
-    acceleration = sense.get_accelerometer_raw()
-
-    x = acceleration["x"]
-
-    y = acceleration["y"]
-
-
-    # ========================================================
-    # HORIZONTAL TILT
-    # ========================================================
-
-    if abs(x) > abs(y):
-
-        if x > TILT_THRESHOLD:
-
-            return "RIGHT"
-
-        elif x < -TILT_THRESHOLD:
-
-            return "LEFT"
-
-
-    # ========================================================
-    # VERTICAL TILT
-    # ========================================================
-
-    else:
-
-        if y > TILT_THRESHOLD:
-
-            return "DOWN"
-
-        elif y < -TILT_THRESHOLD:
-
-            return "UP"
-
-
-    return None
+    return False
 
 
 # ============================================================
-# WAIT FOR SENSOR TO RETURN TO CENTRE
+# 🏆 LEVEL SCORE
 # ============================================================
 
-def wait_for_neutral():
+def calculate_level_score():
 
-    while True:
+    elapsed = time.time() - start_time
 
-        acceleration = sense.get_accelerometer_raw()
+    base = 500
 
-        x = acceleration["x"]
+    time_bonus = max(
+        0,
+        int(300 - elapsed * 3)
+    )
 
-        y = acceleration["y"]
+    life_bonus = lives * 100
 
-        if (
-            abs(x) < 0.20
-            and abs(y) < 0.20
-        ):
+    move_bonus = max(
+        0,
+        200 - moves * 5
+    )
 
-            break
-
-        time.sleep(0.05)
+    return (
+        base
+        + time_bonus
+        + life_bonus
+        + move_bonus
+    )
 
 
 # ============================================================
-# WIN ANIMATION
+# 🎉 LEVEL COMPLETE
 # ============================================================
 
-def win_animation():
+def level_complete():
 
-    # Green and yellow flashing
+    global score
 
-    for i in range(4):
+    level_score = calculate_level_score()
+
+    score += level_score
+
+    print("🎉 MAZE COMPLETE!")
+    print("Moves:", moves)
+    print("Level score:", level_score)
+    print("Total score:", score)
+
+    # Celebration
+    for _ in range(3):
 
         sense.clear(GREEN)
-
         time.sleep(0.2)
 
         sense.clear(YELLOW)
-
         time.sleep(0.2)
 
-    sense.clear()
+    # Show finish position
+    sense.set_pixel(
+        finish_col,
+        finish_row,
+        GREEN
+    )
 
-    # Simple check mark
+    time.sleep(1)
 
-    check = [
+
+# ============================================================
+# 🏆 FINAL VICTORY
+# ============================================================
+
+def final_victory():
+
+    for _ in range(3):
+
+        sense.clear(GREEN)
+        time.sleep(0.25)
+
+        sense.clear(CYAN)
+        time.sleep(0.25)
+
+        sense.clear(YELLOW)
+        time.sleep(0.25)
+
+
+    # Checkmark
+    checkmark = [
 
         BLACK, BLACK, BLACK, BLACK,
         BLACK, BLACK, GREEN, BLACK,
 
         BLACK, BLACK, BLACK, BLACK,
         BLACK, GREEN, BLACK, BLACK,
+
+        BLACK, BLACK, BLACK, BLACK,
+        GREEN, BLACK, BLACK, BLACK,
 
         BLACK, BLACK, BLACK, GREEN,
         BLACK, BLACK, BLACK, BLACK,
@@ -449,156 +588,273 @@ def win_animation():
         BLACK, BLACK, BLACK, BLACK,
 
         BLACK, BLACK, BLACK, BLACK,
-BLACK, BLACK, BLACK, BLACK,
-
-        BLACK, BLACK, BLACK, BLACK,
         BLACK, BLACK, BLACK, BLACK
+
     ]
 
-    sense.set_pixels(check)
+    sense.set_pixels(checkmark)
+
+    print("🏆 YOU WON!")
+    print("Final score:", score)
 
     time.sleep(2)
 
 
 # ============================================================
-# GAME OVER ANIMATION
+# 💔 GAME OVER
 # ============================================================
 
-def lose_animation():
+def game_over_screen():
 
-    for i in range(3):
+    print("GAME OVER")
+
+    for _ in range(3):
 
         sense.clear(RED)
-
-        time.sleep(0.25)
+        time.sleep(0.3)
 
         sense.clear(BLACK)
+        time.sleep(0.3)
 
-        time.sleep(0.25)
 
-    time.sleep(1)
+    # X pattern
+
+    x_pattern = [
+
+        RED, BLACK, BLACK, BLACK,
+        BLACK, BLACK, BLACK, RED,
+
+        BLACK, RED, BLACK, BLACK,
+        BLACK, BLACK, RED, BLACK,
+
+        BLACK, BLACK, RED, BLACK,
+        BLACK, RED, BLACK, BLACK,
+
+        BLACK, BLACK, BLACK, RED,
+        RED, BLACK, BLACK, BLACK,
+
+        BLACK, BLACK, BLACK, RED,
+        RED, BLACK, BLACK, BLACK,
+
+        BLACK, BLACK, RED, BLACK,
+        BLACK, RED, BLACK, BLACK,
+
+        BLACK, RED, BLACK, BLACK,
+        BLACK, BLACK, RED, BLACK,
+
+        RED, BLACK, BLACK, BLACK,
+        BLACK, BLACK, BLACK, RED
+
+    ]
+
+    sense.set_pixels(x_pattern)
+
+    time.sleep(2)
 
 
 # ============================================================
-# MAIN GAME
+# ⏸️ PAUSE GAME
 # ============================================================
 
-def main():
+def pause_game():
+
+    global paused
+
+    paused = True
+
+    sense.clear(MAGENTA)
+
+    time.sleep(0.5)
+
+    while paused:
+
+        event = sense.stick.get_event()
+
+        if event is not None:
+
+            if event.action == "pressed":
+
+                if event.direction == "middle":
+
+                    paused = False
+
+        time.sleep(0.05)
+
+    draw_maze()
+
+
+# ============================================================
+# 🎮 START MENU
+# ============================================================
+
+def start_menu():
+
+    print("================================")
+    print("🍓 SENSE HAT MAZE")
+    print("================================")
+    print("Tilt the Sense HAT to move.")
+    print("Press the joystick to pause.")
+    print("You have 5 lives.")
+    print("================================")
+
+    for _ in range(2):
+
+        sense.clear(GREEN)
+        time.sleep(0.2)
+
+        sense.clear(BLACK)
+        time.sleep(0.2)
+
+    return 0
+
+
+# ============================================================
+# 🎮 PLAY MAZE
+# ============================================================
+
+def play_level(level_number):
 
     global lives
-    global score
     global moves
-    global game_over
-    global game_won
+    global start_time
 
-    # --------------------------------------------------------
-    # RESET GAME
-    # --------------------------------------------------------
+    # Load exact maze
+    load_level(level_number)
 
-    lives = MAX_LIVES
+    # Display maze
+    show_level_intro()
 
-    score = 0
-
+    start_time = time.time()
     moves = 0
 
-    game_over = False
+    while True:
 
-    game_won = False
-
-
-    # --------------------------------------------------------
-    # Find positions
-    # --------------------------------------------------------
-
-    find_positions()
-
-
-    # --------------------------------------------------------
-    # Start screen
-    # --------------------------------------------------------
-
-    start_screen()
-
-    print("================================")
-    print("   RASPBERRY PI MAZE GAME")
-    print("================================")
-    print("Tilt the Sense HAT to move!")
-    print("Lives:", lives)
-    print("================================")
-
-
-    # --------------------------------------------------------
-    # GAME LOOP
-    # --------------------------------------------------------
-
-    while not game_over and not game_won:
-
-        # Check if player has no lives
+        # ====================================================
+        # CHECK LIVES
+        # ====================================================
 
         if lives <= 0:
 
-            game_over = True
+            game_over_screen()
 
-            break
+            return False
 
 
-        # ----------------------------------------------------
-        # Read tilt
-        # ----------------------------------------------------
+        # ====================================================
+        # CHECK TIMER
+        # ====================================================
+
+        elapsed = time.time() - start_time
+
+        time_limit = LEVELS[level_number]["time_limit"]
+
+        if elapsed >= time_limit:
+
+            lives -= 1
+
+            print("Time is up!")
+            print("Lives:", lives)
+
+            if lives <= 0:
+
+                game_over_screen()
+
+                return False
+
+            # Restart the SAME maze
+            load_level(level_number)
+
+            start_time = time.time()
+
+            show_lives()
+
+            continue
+
+
+        # ====================================================
+        # CHECK JOYSTICK
+        # ====================================================
+
+        event = sense.stick.get_event()
+
+        if event is not None:
+
+            if event.action == "pressed":
+
+                if event.direction == "middle":
+
+                    pause_game()
+
+                    continue
+
+
+        # ====================================================
+        # GET TILT
+        # ====================================================
 
         direction = get_direction()
 
 
-        # ----------------------------------------------------
-        # Move player
-        # ----------------------------------------------------
+        # ====================================================
+        # MOVE
+        # ====================================================
 
         if direction is not None:
 
-            move_player(direction)
+            finished = move_player(direction)
 
-            # Prevent one long tilt from moving
-            # the player repeatedly.
-
+            # Wait for tilt to return to neutral
             wait_for_neutral()
 
-            time.sleep(MOVE_DELAY)
+            time.sleep(MOVE_COOLDOWN)
+
+            # =================================================
+            # FINISHED
+            # =================================================
+
+            if finished:
+
+                level_complete()
+
+                return True
 
 
         time.sleep(0.05)
 
 
-    # ========================================================
-    # GAME FINISHED
-    # ========================================================
+# ============================================================
+# 🚀 RUN GAME
+# ============================================================
 
-    if game_won:
+def run_game():
 
-        print()
-        print("🎉 YOU WIN!")
-        print("Score:", score)
-        print("Moves:", moves)
-        print("Lives remaining:", lives)
+    global lives
+    global score
 
-        win_animation()
+    lives = MAX_LIVES
+    score = 0
 
+    # Calibrate while Sense HAT is flat
+    calibrate_sensor()
 
-    elif game_over:
+    # Start
+    selected_level = start_menu()
 
-        print()
-        print("GAME OVER")
-        print("Final score:", score)
+    # Play exact maze
+    completed = play_level(selected_level)
 
-        lose_animation()
+    if completed:
+
+        final_victory()
 
 
 # ============================================================
-# RUN GAME
+# ▶️ PROGRAM START
 # ============================================================
 
 try:
 
-    main()
+    run_game()
 
 except KeyboardInterrupt:
 
