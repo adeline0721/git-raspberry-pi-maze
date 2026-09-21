@@ -449,7 +449,7 @@ def win_animation():
         BLACK, BLACK, BLACK, BLACK,
 
         BLACK, BLACK, BLACK, BLACK,
-        BLACK, BLACK, BLACK, BLACK,
+BLACK, BLACK, BLACK, BLACK,
 
         BLACK, BLACK, BLACK, BLACK,
         BLACK, BLACK, BLACK, BLACK
