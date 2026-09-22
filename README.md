@@ -14,4 +14,4 @@ The Sense HAT is calibrated at the start, so make sure to keep it still during c
 
 The terminal is mainly used to show game information, while the actual gameplay happens on the LED matrix.
 
-To run it, connect the Sense HAT and use:
+To run it, connect the Sense HAT and use
